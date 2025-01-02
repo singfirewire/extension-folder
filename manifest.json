@@ -1,14 +1,4 @@
-extension/
-├── manifest.json
-├── popup.html
-├── popup.css
-├── popup.js
-└── icons/
-    ├── icon16.png
-    ├── icon48.png
-    └── icon128.png
-
-// manifest.json
+# 1. manifest.json - ไฟล์กำหนดค่าหลักของ Extension
 {
   "manifest_version": 3,
   "name": "ESP32 Timer Relay Control",
@@ -31,11 +21,11 @@ extension/
     "storage"
   ],
   "content_security_policy": {
-    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self';"
+    "extension_pages": "script-src 'self' https://cdnjs.cloudflare.com 'wasm-unsafe-eval'; object-src 'self';"
   }
 }
 
-// popup.html
+# 2. popup.html - หน้าต่าง popup ของ Extension
 <!DOCTYPE html>
 <html>
 <head>
@@ -91,7 +81,7 @@ extension/
 </body>
 </html>
 
-// popup.css
+# 3. popup.css - สไตล์ชีทสำหรับ popup
 body {
   width: 400px;
   padding: 15px;
@@ -129,6 +119,7 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  background-color: #f8f9fa;
 }
 
 .status-icon {
@@ -160,6 +151,7 @@ body {
   font-family: 'Kanit', sans-serif;
   font-size: 1em;
   cursor: pointer;
+  transition: all 0.3s ease;
 }
 
 .control-button.on {
@@ -172,7 +164,85 @@ body {
   color: white;
 }
 
-// popup.js
+.control-button:hover {
+  opacity: 0.9;
+}
+
+.connection-status {
+  padding: 10px;
+  margin-bottom: 15px;
+  border-radius: 5px;
+  text-align: center;
+  font-size: 0.9em;
+}
+
+.connected {
+  background-color: rgba(76, 175, 80, 0.1);
+  color: #4CAF50;
+}
+
+.disconnected {
+  background-color: rgba(244, 67, 54, 0.1);
+  color: #f44336;
+}
+
+/* Toggle Switch Style */
+.toggle-container {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 10px 0;
+  padding: 10px;
+  background-color: #f8f9fa;
+  border-radius: 5px;
+}
+
+.switch {
+  position: relative;
+  display: inline-block;
+  width: 40px;
+  height: 24px;
+}
+
+.switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.slider {
+  position: absolute;
+  cursor: pointer;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: #ccc;
+  transition: .4s;
+  border-radius: 24px;
+}
+
+.slider:before {
+  position: absolute;
+  content: "";
+  height: 20px;
+  width: 20px;
+  left: 2px;
+  bottom: 2px;
+  background-color: white;
+  transition: .4s;
+  border-radius: 50%;
+}
+
+input:checked + .slider {
+  background-color: #4CAF50;
+}
+
+input:checked + .slider:before {
+  transform: translateX(16px);
+}
+
+# 4. popup.js - โค้ด JavaScript สำหรับควบคุมการทำงาน
 const mqttServer = 'test.mosquitto.org';
 const mqttPort = 8081;
 const deviceId = 'extension_' + Math.random().toString(16).substr(2, 8);
@@ -197,11 +267,115 @@ const client = mqtt.connect(`wss://${mqttServer}:${mqttPort}`, {
   connectTimeout: 30 * 1000
 });
 
-// Add all the MQTT client event handlers and functions from the original code
-// Add event listeners for buttons and toggles
+client.on('connect', () => {
+  console.log('Connected to MQTT broker');
+  document.getElementById('connectionStatus').className = 'connection-status connected';
+  document.getElementById('connectionStatus').innerHTML = 'พร้อมใช้งาน';
+  client.subscribe(topics.status);
+  requestStatus();
+});
+
+client.on('message', (topic, message) => {
+  console.log('Received:', topic, message.toString());
+  if (topic === topics.status) {
+    try {
+      updateStatus(JSON.parse(message.toString()));
+    } catch (e) {
+      console.error('Error parsing status:', e);
+    }
+  }
+});
+
+client.on('error', (error) => {
+  console.error('MQTT Error:', error);
+  document.getElementById('connectionStatus').className = 'connection-status disconnected';
+  document.getElementById('connectionStatus').innerHTML = 'การเชื่อมต่อผิดพลาด: ' + error.message;
+});
+
+client.on('offline', () => {
+  console.log('MQTT Connection offline');
+  document.getElementById('connectionStatus').className = 'connection-status disconnected';
+  document.getElementById('connectionStatus').innerHTML = 'ขาดการเชื่อมต่อ';
+});
+
+function toggleTimer(relayNumber, enabled) {
+  timerEnabled[relayNumber] = enabled;
+  const topic = relayNumber === 1 ? topics.relay1Control : topics.relay2Control;
+  const message = JSON.stringify({
+    action: 'TIMER_MODE',
+    enabled: enabled
+  });
+  client.publish(topic, message);
+}
+
+function toggleRelay(relayNumber) {
+  const button = document.getElementById(`relay${relayNumber}Button`);
+  const currentState = button.textContent === 'เปิด' ? 'OFF' : 'ON';
+  const action = currentState === 'OFF' ? 'ON' : 'OFF';
+  const topic = relayNumber === 1 ? topics.relay1Control : topics.relay2Control;
+  
+  const message = JSON.stringify({
+    action: action,
+    timerEnabled: timerEnabled[relayNumber]
+  });
+  client.publish(topic, message);
+}
+
+function requestStatus() {
+  client.publish(topics.command, JSON.stringify({
+    command: 'status'
+  }));
+}
+
+function formatTime(seconds) {
+  const minutes = Math.floor(seconds / 60);
+  const remainingSeconds = seconds % 60;
+  return `${String(minutes).padStart(2, '0')}:${String(remainingSeconds).padStart(2, '0')}`;
+}
+
+function updateRelayStatus(relayNumber, relayStatus) {
+  if (!relayStatus) return;
+
+  const statusElement = document.getElementById(`relay${relayNumber}Status`);
+  const timerElement = document.getElementById(`relay${relayNumber}Timer`);
+  const buttonElement = document.getElementById(`relay${relayNumber}Button`);
+  const timerToggle = document.getElementById(`timer${relayNumber}Toggle`);
+
+  if (relayStatus.active) {
+    statusElement.className = 'status status-on';
+    statusElement.innerHTML = '<div><span class="status-icon"></span><span class="status-text">เปิด</span></div>';
+    buttonElement.textContent = 'ปิด';
+    buttonElement.className = 'control-button off';
+
+    if (relayStatus.remaining !== undefined && timerEnabled[relayNumber]) {
+      timerElement.textContent = formatTime(relayStatus.remaining);
+      timerElement.classList.add('active-timer');
+    }
+  } else {
+    statusElement.className = 'status status-off';
+    statusElement.innerHTML = '<div><span class="status-icon"></span><span class="status-text">ปิด</span></div>';
+    buttonElement.textContent = 'เปิด';
+    buttonElement.className = 'control-button on';
+    timerElement.textContent = '00:00';
+    timerElement.classList.remove('active-timer');
+  }
+
+  if (relayStatus.timerEnabled !== undefined) {
+    timerToggle.checked = relayStatus.timerEnabled;
+    timerEnabled[relayNumber] = relayStatus.timerEnabled;
+  }
+}
+
+function updateStatus(status) {
+  updateRelayStatus(1, status.relay1);
+  updateRelayStatus(2, status.relay2);
+}
+
+// Add event listeners
 document.getElementById('relay1Button').addEventListener('click', () => toggleRelay(1));
 document.getElementById('relay2Button').addEventListener('click', () => toggleRelay(2));
 document.getElementById('timer1Toggle').addEventListener('change', (e) => toggleTimer(1, e.target.checked));
 document.getElementById('timer2Toggle').addEventListener('change', (e) => toggleTimer(2, e.target.checked));
 
-// Add the rest of the functions from the original code (toggleRelay, requestStatus, formatTime, updateStatus, etc.)
+// Request status update every second
+setInterval(requestStatus, 1000);
